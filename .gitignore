@@ -1,0 +1,10 @@
+*.obj
+*.exe
+*.dll
+*.ilk
+*.pdb
+*.rdbg
+*.vert.h
+*.frag.h
+.ninja_deps
+.ninja_log
