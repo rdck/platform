@@ -1,46 +1,63 @@
 #include <stdlib.h>
 #include "display.h"
+#include "log.h"
 #include "glad/gl.h"
 #include "shader/primary.vert.h"
 #include "shader/primary.frag.h"
 #include "shader/post.vert.h"
 #include "shader/post.frag.h"
 
-#define LOG_BUFFER_SIZE 512
-#define MAX_SPRITES 0x8000
-#define SPRITE_VERTICES 6 // two triangles
-#define FB_FILTER GL_LINEAR
-#define TEXTURE_FILTER GL_LINEAR
-#define VERTEX_STRIDE 5
+#ifndef DISPLAY_SPRITES
+#define DISPLAY_SPRITES 0x400
+#endif
+
+#ifndef DISPLAY_TEXTURE_FILTER
+#define DISPLAY_TEXTURE_FILTER GL_LINEAR
+#endif
+
+#ifndef DISPLAY_FB_FILTER
+#define DISPLAY_FB_FILTER GL_NEAREST
+#endif
+
+#define DISPLAY_SPRITE_VERTICES 6 // two triangles
+#define DISPLAY_VERTICES (DISPLAY_SPRITES * DISPLAY_SPRITE_VERTICES)
+#define DISPLAY_LOG_LENGTH 0x800
+#define DISPLAY_RENDER_STRIDE 5
+#define DISPLAY_POSTPROCESS_STRIDE 4
 
 typedef struct {
 
   V2S render_resolution;
   V2S window_resolution;
 
-  GLuint program;
-  GLuint VBO;
-  GLuint VAO;
+  GLuint render_program;
+  GLuint render_vbo;
+  GLuint render_vao;
 
-  GLuint screen_program;
+  GLuint postprocess_program;
+  GLuint postprocess_vbo;
+  GLuint postprocess_vao;
+
   GLuint fbo;
   GLuint fb_color;
-  GLuint screen_vbo;
-  GLuint screen_vao;
 
   GLint projection;
-  GLint blend;
 
 } DisplayContext;
 
-typedef struct {
+typedef struct Vertex {
   F32 x; F32 y; // position
   F32 u; F32 v; // texture coordinates
   U32 color;
 } Vertex;
 
-static Sprite display_sprite_buffer[MAX_SPRITES] = {0};
-static Vertex display_vertex_buffer[SPRITE_VERTICES * MAX_SPRITES] = {0};
+typedef struct ShaderSource {
+  GLchar* data;
+  GLint length;
+} ShaderSource;
+
+static Sprite display_sprite_buffer[DISPLAY_SPRITES] = {0};
+static Vertex display_vertex_buffer[DISPLAY_VERTICES] = {0};
 static S32 display_sprite_index = 0;
 
 static DisplayContext ctx = {0};
@@ -54,14 +71,6 @@ static F32 quad_vertices[] = {
   +1.0f, -1.0f, +1.0f, +0.0f,
   +1.0f, +1.0f, +1.0f, +1.0f,
 };
-
-Void display_sprite(Sprite sprite)
-{
-  if (display_sprite_index < MAX_SPRITES) {
-    display_sprite_buffer[display_sprite_index] = sprite;
-    display_sprite_index += 1;
-  }
-}
 
 static Void GLAPIENTRY gl_message_callback(
     GLenum source,
@@ -78,147 +87,138 @@ static Void GLAPIENTRY gl_message_callback(
   UNUSED_PARAMETER(id);
   UNUSED_PARAMETER(severity);
   UNUSED_PARAMETER(length);
-  UNUSED_PARAMETER(message);
   UNUSED_PARAMETER(user_param);
-  ASSERT(severity == GL_DEBUG_SEVERITY_NOTIFICATION);
+  platform_log_warn(message);
 }
 
 TextureID display_load_image(const Byte* image, V2S dimensions)
 {
-  if (image) {
-    GLuint id;
-    glGenTextures(1, &id);
-    glBindTexture(GL_TEXTURE_2D, id);  
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, TEXTURE_FILTER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, TEXTURE_FILTER);
+  ASSERT(image);
+  GLuint id = 0;
+  glGenTextures(1, &id);
+  glBindTexture(GL_TEXTURE_2D, id);  
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, DISPLAY_TEXTURE_FILTER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, DISPLAY_TEXTURE_FILTER);
 #ifdef DISPLAY_SUPPORT_MONOCHROME
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 #endif
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,                  // level
-        GL_RGBA,            // internal format
-        dimensions.x,       // width
-        dimensions.y,       // height
-        0,                  // border (must be 0)
-        GL_RGBA,            // format
-        GL_UNSIGNED_BYTE,   // type of pixel data
-        image
-        );
-    return id;
-  } else {
-    return 0;
-  }
+  glTexImage2D(
+      GL_TEXTURE_2D,
+      0,                  // level
+      GL_RGBA,            // internal format
+      dimensions.x,       // width
+      dimensions.y,       // height
+      0,                  // border (must be 0)
+      GL_RGBA,            // format
+      GL_UNSIGNED_BYTE,   // type of pixel data
+      image
+      );
+  return id;
 }
 
-// returns 0 on failure
-static GLuint compile_shader(GLenum type, GLchar* source, GLint length)
+static GLuint compile_shader(GLenum type, ShaderSource source)
 {
-  GLuint shader_id = glCreateShader(type);
-  if (shader_id) {
-    GLchar* sources[1] = {source};
-    glShaderSource(shader_id, 1, sources, &length);
-    glCompileShader(shader_id);
-    GLint success = 0;
-    glGetShaderiv(shader_id, GL_COMPILE_STATUS, &success);
-    if (!success) {
-      Char log_buffer[LOG_BUFFER_SIZE];
-      glGetShaderInfoLog(shader_id, LOG_BUFFER_SIZE, NULL, log_buffer);
-      shader_id = 0;
-    }
+  const GLuint shader_id = glCreateShader(type);
+  ASSERT(shader_id);
+
+  GLchar* const sources[1] = { source.data };
+  glShaderSource(shader_id, 1, sources, &source.length);
+  glCompileShader(shader_id);
+
+  GLint success = 0;
+  glGetShaderiv(shader_id, GL_COMPILE_STATUS, &success);
+  if (success == 0) {
+    Char log_buffer[DISPLAY_LOG_LENGTH];
+    GLsizei log_length = 0;
+    glGetShaderInfoLog(shader_id, DISPLAY_LOG_LENGTH, &log_length, log_buffer);
+    platform_log_error(log_buffer);
   }
+
   return shader_id;
 }
 
-// returns 0 on failure
 static GLuint link_program(GLuint vertex, GLuint fragment)
 {
-  GLuint program = glCreateProgram();
-  if (program) {
-    glAttachShader(program, vertex);
-    glAttachShader(program, fragment);
-    glLinkProgram(program);
-    GLint success = 0;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-      Char log_buffer[LOG_BUFFER_SIZE];
-      glGetProgramInfoLog(program, LOG_BUFFER_SIZE, NULL, log_buffer);
-      program = 0;
-    }
+  const GLuint program = glCreateProgram();
+  ASSERT(program);
+
+  glAttachShader(program, vertex);
+  glAttachShader(program, fragment);
+  glLinkProgram(program);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+  if (success == 0) {
+    Char log_buffer[DISPLAY_LOG_LENGTH];
+    GLsizei log_length = 0;
+    glGetProgramInfoLog(program, DISPLAY_LOG_LENGTH, &log_length, log_buffer);
+    platform_log_error(log_buffer);
   }
+
   return program;
 }
 
-// returns 0 on failure
-static GLuint compile_program()
+static GLuint compile_program(ShaderSource vert, ShaderSource frag)
 {
-  GLuint program = 0;
-  GLuint vertex = compile_shader(GL_VERTEX_SHADER, (GLchar*) shader_primary_vert, shader_primary_vert_len);
-  GLuint fragment = compile_shader(GL_FRAGMENT_SHADER, (GLchar*) shader_primary_frag, shader_primary_frag_len);
-  if (vertex && fragment) {
-    program = link_program(vertex, fragment);
-  }
-  if (vertex) { glDeleteShader(vertex); }
-  if (fragment) { glDeleteShader(fragment); }
+  const GLuint vert_id = compile_shader(GL_VERTEX_SHADER, vert);
+  const GLuint frag_id = compile_shader(GL_FRAGMENT_SHADER, frag);
+  ASSERT(vert_id);
+  ASSERT(frag_id);
+
+  const GLuint program = link_program(vert_id, frag_id);
+  ASSERT(program);
+
   return program;
 }
 
-// @rdk: unify with compile_program
-static GLuint compile_post()
-{
-  GLuint program = 0;
-  GLuint vertex = compile_shader(GL_VERTEX_SHADER, (GLchar*) shader_post_vert, shader_post_vert_len);
-  GLuint fragment = compile_shader(GL_FRAGMENT_SHADER, (GLchar*) shader_post_frag, shader_post_frag_len);
-  if (vertex && fragment) {
-    program = link_program(vertex, fragment);
-  }
-  if (vertex) { glDeleteShader(vertex); }
-  if (fragment) { glDeleteShader(fragment); }
-  return program;
-}
-
+// @rdk: disable GL debug output in release builds
 Void display_init(V2S window, V2S render)
 {
-  // @rdk: disable GL debug output in release builds
-
   ctx.window_resolution = window;
   ctx.render_resolution = render;
 
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(gl_message_callback, 0);
 
-  ctx.program = compile_program();
-  ctx.screen_program = compile_post();
+  const ShaderSource vert_primary = { (GLchar*) shader_primary_vert, shader_primary_vert_len };
+  const ShaderSource frag_primary = { (GLchar*) shader_primary_frag, shader_primary_frag_len };
+  const ShaderSource vert_post = { (GLchar*) shader_post_vert, shader_post_vert_len };
+  const ShaderSource frag_post = { (GLchar*) shader_post_frag, shader_post_frag_len };
+  ctx.render_program = compile_program(vert_primary, frag_primary);
+  ctx.postprocess_program = compile_program(vert_post, frag_post);
 
   ////////////////////////////////////////////////////////////////////////////////
 
-  glUseProgram(ctx.screen_program);
+  glUseProgram(ctx.postprocess_program);
 
-  glGenVertexArrays(1, &ctx.screen_vao);
-  glGenBuffers(1, &ctx.screen_vbo);
-  glBindVertexArray(ctx.screen_vao);
-  glBindBuffer(GL_ARRAY_BUFFER, ctx.screen_vbo);
+  glGenVertexArrays(1, &ctx.postprocess_vao);
+  glGenBuffers(1, &ctx.postprocess_vbo);
+  glBindVertexArray(ctx.postprocess_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, ctx.postprocess_vbo);
 
-  glVertexAttribPointer(
-      0,                          // index
-      2,                          // size
-      GL_FLOAT,                   // type
-      GL_FALSE,                   // normalized
-      4 * sizeof(F32),            // stride
-      (Void*)0                    // offset
-      );
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(
-      1,                          // index
-      2,                          // size
-      GL_FLOAT,                   // type
-      GL_FALSE,                   // normalized
-      4 * sizeof(F32),            // stride
-      (Void*)(2 * sizeof(F32))    // offset
-      );
-  glEnableVertexAttribArray(1);
+  {
+    const GLsizei stride = DISPLAY_POSTPROCESS_STRIDE * sizeof(F32);
+    glVertexAttribPointer(
+        0,                          // index
+        2,                          // size
+        GL_FLOAT,                   // type
+        GL_FALSE,                   // normalized
+        stride,                     // stride
+        (Void*)0                    // offset
+        );
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(
+        1,                          // index
+        2,                          // size
+        GL_FLOAT,                   // type
+        GL_FALSE,                   // normalized
+        stride,                     // stride
+        (Void*)(2 * sizeof(F32))    // offset
+        );
+    glEnableVertexAttribArray(1);
+  }
 
   glBufferData(
       GL_ARRAY_BUFFER,        // target
@@ -229,48 +229,46 @@ Void display_init(V2S window, V2S render)
 
   ////////////////////////////////////////////////////////////////////////////////
 
-  glUseProgram(ctx.program);
+  glUseProgram(ctx.render_program);
 
-  glGenVertexArrays(1, &ctx.VAO);
-  glGenBuffers(1, &ctx.VBO);
-  glBindVertexArray(ctx.VAO);
-  glBindBuffer(GL_ARRAY_BUFFER, ctx.VBO);
+  glGenVertexArrays(1, &ctx.render_vao);
+  glGenBuffers(1, &ctx.render_vbo);
+  glBindVertexArray(ctx.render_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, ctx.render_vbo);
 
-  // position attribute
-  glVertexAttribPointer(
-      0,                            // index
-      2,                            // size
-      GL_FLOAT,                     // type
-      GL_FALSE,                     // normalized
-      VERTEX_STRIDE * sizeof(F32),  // stride
-      (Void*)0                      // offset
-      );
-  glEnableVertexAttribArray(0);
+  {
+    const GLsizei stride = DISPLAY_RENDER_STRIDE * sizeof(F32);
+    glVertexAttribPointer(
+        0,                            // index
+        2,                            // size
+        GL_FLOAT,                     // type
+        GL_FALSE,                     // normalized
+        stride,                       // stride
+        (Void*)0                      // offset
+        );
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(
+        1,                            // index
+        2,                            // size
+        GL_FLOAT,                     // type
+        GL_FALSE,                     // normalized
+        stride,                       // stride
+        (Void*)(2 * sizeof(F32))      // offset
+        );
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(
+        2,                            // index
+        4,                            // size
+        GL_UNSIGNED_BYTE,             // type
+        GL_TRUE,                      // normalized
+        stride,                       // stride
+        (Void*)(4 * sizeof(F32))      // offset
+        );
+    glEnableVertexAttribArray(2);
+  }
 
-  // texture coordinate attribute
-  glVertexAttribPointer(
-      1,                            // index
-      2,                            // size
-      GL_FLOAT,                     // type
-      GL_FALSE,                     // normalized
-      VERTEX_STRIDE * sizeof(F32),  // stride
-      (Void*)(2 * sizeof(F32))      // offset
-      );
-  glEnableVertexAttribArray(1);
-
-  // color attribute
-  glVertexAttribPointer(
-      2,                            // index
-      4,                            // size
-      GL_UNSIGNED_BYTE,             // type
-      GL_TRUE,                      // normalized
-      VERTEX_STRIDE * sizeof(F32),  // stride
-      (Void*)(4 * sizeof(F32))      // offset
-      );
-  glEnableVertexAttribArray(2);
-
-  ctx.projection = glGetUniformLocation(ctx.program, "projection");
-  M4F ortho = HMM_Orthographic_RH_NO(
+  ctx.projection = glGetUniformLocation(ctx.render_program, "projection");
+  const M4F ortho = HMM_Orthographic_RH_NO(
       0.f,                        // left
       (F32) render.x,             // right
       (F32) render.y,             // bottom
@@ -280,10 +278,6 @@ Void display_init(V2S window, V2S render)
       );
   glUniformMatrix4fv(ctx.projection, 1, GL_FALSE, (GLfloat*) &ortho.Elements);
 
-  ctx.blend = glGetUniformLocation(ctx.program, "blend");
-  glUniform1f(ctx.blend, 0.0f);
-
-  glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
   // framebuffer setup
@@ -305,8 +299,8 @@ Void display_init(V2S window, V2S render)
       NULL
       );
 
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, FB_FILTER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, FB_FILTER);  
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, DISPLAY_FB_FILTER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, DISPLAY_FB_FILTER);  
 
   glFramebufferTexture2D(
       GL_FRAMEBUFFER,
@@ -322,9 +316,9 @@ Void display_begin_frame()
   glBindFramebuffer(GL_FRAMEBUFFER, ctx.fbo);
   glClear(GL_COLOR_BUFFER_BIT);
 
-  glUseProgram(ctx.program);
+  glUseProgram(ctx.render_program);
   glViewport(0, 0, ctx.render_resolution.x, ctx.render_resolution.y);
-  glBindVertexArray(ctx.VAO);
+  glBindVertexArray(ctx.render_vao);
   glEnable(GL_BLEND);
 }
 
@@ -333,39 +327,46 @@ Void display_end_frame()
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glClear(GL_COLOR_BUFFER_BIT);
 
-  glUseProgram(ctx.screen_program);
+  glUseProgram(ctx.postprocess_program);
   glViewport(0, 0, ctx.window_resolution.x, ctx.window_resolution.y);
   glDisable(GL_BLEND);
-  glBindVertexArray(ctx.screen_vao);
+  glBindVertexArray(ctx.postprocess_vao);
   glBindTexture(GL_TEXTURE_2D, ctx.fb_color);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
+U32 display_color(U8 r, U8 g, U8 b, U8 a)
+{
+  const U32 or = r <<  0;
+  const U32 og = g <<  8;
+  const U32 ob = b << 16;
+  const U32 oa = a << 24;
+  return or | og | ob | oa;
+}
+
 U32 display_color_lerp(U32 a, U32 b, F32 t)
 {
-  Color32* const ap = (Color32*) &a;
-  Color32* const bp = (Color32*) &b;
+  const U8 ar = (U8) (a <<  0);
+  const U8 ag = (U8) (a <<  8);
+  const U8 ab = (U8) (a << 16);
+  const U8 aa = (U8) (a << 24);
 
-  Color32 ac = *ap;
-  Color32 bc = *bp;
+  const U8 br = (U8) (b <<  0);
+  const U8 bg = (U8) (b <<  8);
+  const U8 bb = (U8) (b << 16);
+  const U8 ba = (U8) (b << 24);
 
-  Color32 out;
-  out.r = (U8) f32_lerp((F32) ac.r, (F32) bc.r, t);
-  out.g = (U8) f32_lerp((F32) ac.g, (F32) bc.g, t);
-  out.b = (U8) f32_lerp((F32) ac.b, (F32) bc.b, t);
-  out.a = (U8) f32_lerp((F32) ac.a, (F32) bc.a, t);
+  const U8 or = u8_lerp(ar, br, t);
+  const U8 og = u8_lerp(ag, bg, t);
+  const U8 ob = u8_lerp(ab, bb, t);
+  const U8 oa = u8_lerp(aa, ba, t);
 
-  U32* const outp = (U32*) &out;
-  return *outp;
+  return display_color(or, og, ob, oa);
 }
 
-Void display_bind_texture(TextureID id)
+Void display_begin_draw(TextureID texture)
 {
-  glBindTexture(GL_TEXTURE_2D, id);
-}
-
-Void display_begin_draw()
-{
+  glBindTexture(GL_TEXTURE_2D, texture);
   display_sprite_index = 0;
 }
 
@@ -375,7 +376,7 @@ Void display_end_draw()
 
   for (S32 i = 0; i < display_sprite_index; i++) {
 
-    const S32 vi = SPRITE_VERTICES * i;
+    const S32 vi = DISPLAY_SPRITE_VERTICES * i;
     const Sprite* const sprite = &display_sprite_buffer[i];
 
     // top left
@@ -422,14 +423,51 @@ Void display_end_draw()
 
   }
 
-  glBindBuffer(GL_ARRAY_BUFFER, ctx.VBO);
+  const S32 vertex_count = DISPLAY_SPRITE_VERTICES * display_sprite_index;
+  const GLsizeiptr size = vertex_count * sizeof(Vertex);
+  glBindBuffer(GL_ARRAY_BUFFER, ctx.render_vbo);
   glBufferData(
       GL_ARRAY_BUFFER,    // target
-      SPRITE_VERTICES * display_sprite_index * sizeof(Vertex), // size in bytes
+      size,               // size in bytes
       vertices,           // data
       GL_DYNAMIC_DRAW     // usage
       );
 
-  glBindVertexArray(ctx.VAO);
-  glDrawArrays(GL_TRIANGLES, 0, SPRITE_VERTICES * display_sprite_index);
+  glBindVertexArray(ctx.render_vao);
+  glDrawArrays(GL_TRIANGLES, 0, vertex_count);
+}
+
+Void display_draw_sprite(V2F root, V2F size, U32 color, V2F t1, V2F t2)
+{
+  Sprite sprite;
+  sprite.ta     = t1;
+  sprite.tb     = t2;
+  sprite.color  = color;
+  sprite.root   = root;
+  sprite.size   = size;
+  display_draw_sprite_struct(sprite);
+}
+
+Void display_draw_sprite_struct(Sprite sprite)
+{
+  if (display_sprite_index < DISPLAY_SPRITES) {
+    display_sprite_buffer[display_sprite_index] = sprite;
+    display_sprite_index += 1;
+  }
+}
+
+Void display_draw_texture(V2F root, V2F size, U32 color)
+{
+  Sprite sprite;
+  sprite.root   = root;
+  sprite.size   = size;
+  sprite.color  = color;
+  display_draw_texture_struct(sprite);
+}
+
+Void display_draw_texture_struct(Sprite sprite)
+{
+  sprite.ta = v2f(0.f, 0.f);
+  sprite.tb = v2f(1.f, 1.f);
+  display_draw_sprite_struct(sprite);
 }

@@ -2,58 +2,84 @@
  * shell.c - program entry point
  ******************************************************************************/
 
-#define WIN32_LEAN_AND_MEAN
-#define INITGUID
-#define CINTERFACE
-#define COBJMACROS
-#define CONST_VTABLE
-#include <windows.h>
-#include <initguid.h>
-#include <mmdeviceapi.h>
+#include "windows/wrapper.h"
+
+#ifdef PLATFORM_AUDIO
 #include <audioclient.h>
 #include <avrt.h>
-#include <dbghelp.h>
+#include <mmdeviceapi.h>
+#endif
+
+#include <stdatomic.h>
+#include "loop.h"
+#include "audio_format.h"
+#include "log.h"
 
 #define GLAD_GL_IMPLEMENTATION
 #define GLAD_WGL_IMPLEMENTATION
 #include "glad/wgl.h"
-
-#include "loop.h"
-#include "audio_guid.c"
 
 #define SHELL_CLASS_NAME "SHELL_WINDOW_CLASS"
 #define SHELL_EXIT_SUCCESS 0
 #define SHELL_EXIT_FAILURE 1
 #define SHELL_GL_VERSION_MAJOR 4
 #define SHELL_GL_VERSION_MINOR 5
-#define SHELL_TITLE "ORCASYNTH"
-
-#define SHELL_AUDIO_BIT_DEPTH 32
 #define SHELL_AUDIO_TIMEOUT 2000
+
+#define VK_CARDINAL 0x100
+
+#define THREAD_EXIT_SUCCESS 0
+#define THREAD_EXIT_FAILURE 1
+
+#ifdef PLATFORM_AUDIO
+
+typedef struct AudioDevice {
+  IMMDevice* device;
+  IAudioClient* client;
+  IAudioRenderClient* render;
+  HANDLE event;
+  UINT32 buffer_size;
+} AudioDevice;
+
+typedef struct AudioBuffer {
+  Index frames;
+  F32* data;
+} AudioBuffer;
+
+#endif
 
 /*******************************************************************************
  * STATIC DATA
  ******************************************************************************/
 
-static const Char* shell_error_caption = "ERROR";
-static InputFrame shell_input = {0};
-static Index shell_input_index = 0;
-static Index shell_char_index = 0;
-static S64 shell_performance_frequency = 0;
+static HWND shell_window = NULL;
 
-static IAudioClient*        shell_audio_client;
-static IAudioRenderClient*  shell_render_client;
-static UINT32               shell_buffer_size;
-static HANDLE               shell_event_handle;
+// signal for audio thread
+static _Atomic Bool quit_signal = false;
 
-// @rdk: determine max keycode properly
-static S32 shell_key_table[0xFF] = {
+static KeyCode shell_key_table[VK_CARDINAL] = {
   [ VK_LBUTTON    ] = KEYCODE_MOUSE_LEFT,
   [ VK_RBUTTON    ] = KEYCODE_MOUSE_RIGHT,
-  [ VK_ESCAPE     ] = KEYCODE_ESCAPE,
-  [ VK_RETURN     ] = KEYCODE_ENTER,
+  [ VK_MBUTTON    ] = KEYCODE_MOUSE_MIDDLE,
   [ VK_BACK       ] = KEYCODE_BACKSPACE,
   [ VK_TAB        ] = KEYCODE_TAB,
+  [ VK_RETURN     ] = KEYCODE_ENTER,
+  [ VK_SHIFT      ] = KEYCODE_SHIFT,
+  [ VK_CONTROL    ] = KEYCODE_CONTROL,
+  [ VK_MENU       ] = KEYCODE_ALT,
+  [ VK_CAPITAL    ] = KEYCODE_CAPS,
+  [ VK_ESCAPE     ] = KEYCODE_ESCAPE,
+  [ VK_SPACE      ] = KEYCODE_SPACE,
+  [ VK_PRIOR      ] = KEYCODE_PAGE_UP,
+  [ VK_NEXT       ] = KEYCODE_PAGE_DOWN,
+  [ VK_END        ] = KEYCODE_END,
+  [ VK_HOME       ] = KEYCODE_HOME,
+  [ VK_INSERT     ] = KEYCODE_INSERT,
+  [ VK_DELETE     ] = KEYCODE_DELETE,
+  [ VK_LEFT       ] = KEYCODE_ARROW_LEFT,
+  [ VK_RIGHT      ] = KEYCODE_ARROW_RIGHT,
+  [ VK_UP         ] = KEYCODE_ARROW_UP,
+  [ VK_DOWN       ] = KEYCODE_ARROW_DOWN,
   [ VK_F1         ] = KEYCODE_F1,
   [ VK_F2         ] = KEYCODE_F2,
   [ VK_F3         ] = KEYCODE_F3,
@@ -66,11 +92,16 @@ static S32 shell_key_table[0xFF] = {
   [ VK_F10        ] = KEYCODE_F10,
   [ VK_F11        ] = KEYCODE_F11,
   [ VK_F12        ] = KEYCODE_F12,
-  [ VK_LEFT       ] = KEYCODE_ARROW_LEFT,
-  [ VK_RIGHT      ] = KEYCODE_ARROW_RIGHT,
-  [ VK_UP         ] = KEYCODE_ARROW_UP,
-  [ VK_DOWN       ] = KEYCODE_ARROW_DOWN,
-  [ ' '           ] = KEYCODE_SPACE,
+  [ '0'           ] = KEYCODE_0,
+  [ '1'           ] = KEYCODE_1,
+  [ '2'           ] = KEYCODE_2,
+  [ '3'           ] = KEYCODE_3,
+  [ '4'           ] = KEYCODE_4,
+  [ '5'           ] = KEYCODE_5,
+  [ '6'           ] = KEYCODE_6,
+  [ '7'           ] = KEYCODE_7,
+  [ '8'           ] = KEYCODE_8,
+  [ '9'           ] = KEYCODE_9,
   [ 'A'           ] = KEYCODE_A,
   [ 'B'           ] = KEYCODE_B,
   [ 'C'           ] = KEYCODE_C,
@@ -97,254 +128,281 @@ static S32 shell_key_table[0xFF] = {
   [ 'X'           ] = KEYCODE_X,
   [ 'Y'           ] = KEYCODE_Y,
   [ 'Z'           ] = KEYCODE_Z,
-  [ '0'           ] = KEYCODE_0,
-  [ '1'           ] = KEYCODE_1,
-  [ '2'           ] = KEYCODE_2,
-  [ '3'           ] = KEYCODE_3,
-  [ '4'           ] = KEYCODE_4,
-  [ '5'           ] = KEYCODE_5,
-  [ '6'           ] = KEYCODE_6,
-  [ '7'           ] = KEYCODE_7,
-  [ '8'           ] = KEYCODE_8,
-  [ '9'           ] = KEYCODE_9,
+  [ VK_OEM_3      ] = KEYCODE_GRAVE,
   [ VK_OEM_PLUS   ] = KEYCODE_PLUS,
   [ VK_OEM_MINUS  ] = KEYCODE_MINUS,
+  [ VK_OEM_4      ] = KEYCODE_BRACKET_OPEN,
+  [ VK_OEM_6      ] = KEYCODE_BRACKET_CLOSE,
+  [ VK_OEM_5      ] = KEYCODE_BACKSLASH,
+  [ VK_OEM_1      ] = KEYCODE_SEMICOLON,
+  [ VK_OEM_7      ] = KEYCODE_APOSTROPHE,
+  [ VK_OEM_COMMA  ] = KEYCODE_COMMA,
+  [ VK_OEM_PERIOD ] = KEYCODE_PERIOD,
+  [ VK_OEM_2      ] = KEYCODE_SLASH,
 };
-
-static Void shell_error_message(const Char* message)
-{
-  MessageBox(NULL, message, shell_error_caption, MB_ICONERROR);
-}
-
-static S64 shell_query_clock()
-{
-  LARGE_INTEGER pc;
-  QueryPerformanceCounter(&pc);
-  return pc.QuadPart * MEGA / shell_performance_frequency;
-}
 
 /*******************************************************************************
  * AUDIO CALLBACKS
  ******************************************************************************/
 
-static Index shell_audio_acquire_buffer(F32** data)
+#ifdef PLATFORM_AUDIO
+
+static Bool shell_audio_acquire_buffer(AudioBuffer* out, const AudioDevice* device)
 {
-  UINT32 padding = 0;
-
-  HRESULT hr;
-
-  const DWORD wait_status = WaitForSingleObject(shell_event_handle, SHELL_AUDIO_TIMEOUT);
+  const DWORD wait_status = WaitForSingleObject(device->event, SHELL_AUDIO_TIMEOUT);
   if (wait_status != WAIT_OBJECT_0) {
-    return SHELL_EXIT_FAILURE;
+    return true;
   }
 
-  hr = IAudioClient_GetCurrentPadding(shell_audio_client, &padding);
-  if (FAILED(hr)) {
-    return SHELL_EXIT_FAILURE;
+  UINT32 padding = 0;
+  const HRESULT padding_status = IAudioClient_GetCurrentPadding(device->client, &padding);
+  if (FAILED(padding_status)) {
+    return true;
   }
 
-  ASSERT(shell_buffer_size >= padding);
-  const UINT32 _frames = shell_buffer_size - padding;
-
-  hr = IAudioRenderClient_GetBuffer(shell_render_client, _frames, (BYTE**) data);
-  if (FAILED(hr)) {
-    return SHELL_EXIT_FAILURE;
+  const UINT32 frames = device->buffer_size - padding;
+  const HRESULT buffer_status = IAudioRenderClient_GetBuffer(
+      device->render,
+      frames,
+      (BYTE**) &out->data
+      );
+  if (SUCCEEDED(buffer_status)) {
+    out->frames = frames;
+    return false;
+  } else {
+    return true;
   }
-
-  return (Index) _frames;
-}
-
-static Void shell_audio_release_buffer(Index frames)
-{
-  const U32 uframes = (U32) frames;
-  const HRESULT hr = IAudioRenderClient_ReleaseBuffer(shell_render_client, uframes, 0);
-  ASSERT(hr == S_OK); // failed to release buffer
 }
 
 static DWORD WINAPI shell_audio_entry(Void* data)
 {
   UNUSED_PARAMETER(data);
-
   HRESULT hr;
+  IMMDeviceEnumerator* enumerator = NULL;
+  AudioDevice device = {0};
 
   hr = CoInitializeEx(NULL, COINIT_SPEED_OVER_MEMORY | COINIT_MULTITHREADED);
   if (FAILED(hr)) {
-    shell_error_message("failed to initialize COM");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to initialize COM");
+    goto cleanup;
   }
 
   DWORD task_index = 0;
   const HANDLE task_handle = AvSetMmThreadCharacteristicsA("Pro Audio", &task_index);
-  if (!task_handle) { return 1; }
-
-  IMMDevice* device = NULL;
-
-  IMMDeviceEnumerator* enumerator = NULL;
-  hr = CoCreateInstance(
-      &CLSID_MMDeviceEnumerator,
-      NULL,
-      CLSCTX_ALL,
-      &IID_IMMDeviceEnumerator,
-      &enumerator
-      );
-  if (FAILED(hr)) {
-    shell_error_message("failed to create audio device enumerator");
-    return SHELL_EXIT_FAILURE;
+  if (task_handle == 0) {
+    platform_log_warn("failed to set pro audio thread characteristic");
   }
 
-  hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, eRender, eConsole, &device);
+  hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator, &enumerator);
   if (FAILED(hr)) {
-    shell_error_message("failed to get default audio endpoint");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to create audio device enumerator");
+    goto cleanup;
   }
-  IMMDeviceEnumerator_Release(enumerator);
 
-  hr = IMMDevice_Activate(device, &IID_IAudioClient, CLSCTX_ALL, NULL, &shell_audio_client);
+  hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, eRender, eConsole, &device.device);
   if (FAILED(hr)) {
-    shell_error_message("failed to activate audio device");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to get default audio endpoint");
+    goto cleanup;
   }
-  IMMDevice_Release(device);
 
+  hr = IMMDevice_Activate(device.device, &IID_IAudioClient, CLSCTX_ALL, NULL, &device.client);
+  if (FAILED(hr)) {
+    platform_log_error("failed to activate audio device");
+    goto cleanup;
+  }
+
+  REFERENCE_TIME duration = 0;
+  hr = IAudioClient_GetDevicePeriod(device.client, &duration, NULL);
+  if (FAILED(hr)) {
+    platform_log_error("failed to get audio device period");
+    goto cleanup;
+  }
+
+  const WORD block_align = STEREO * PLATFORM_BIT_DEPTH / 8;
+  const DWORD throughput = PLATFORM_SAMPLE_RATE * block_align;
   WAVEFORMATEXTENSIBLE audio_format;
-  audio_format.Format.cbSize = sizeof(audio_format);
-  audio_format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-  audio_format.Format.wBitsPerSample = SHELL_AUDIO_BIT_DEPTH;
-  audio_format.Format.nChannels = 2;
-  audio_format.Format.nSamplesPerSec = (DWORD) Config_AUDIO_SAMPLE_RATE;
-  audio_format.Format.nBlockAlign = (WORD) (audio_format.Format.nChannels * audio_format.Format.wBitsPerSample / 8);
-  audio_format.Format.nAvgBytesPerSec = audio_format.Format.nSamplesPerSec * audio_format.Format.nBlockAlign;
-  audio_format.Samples.wValidBitsPerSample = SHELL_AUDIO_BIT_DEPTH;
-  audio_format.dwChannelMask = KSAUDIO_SPEAKER_STEREO;
-  audio_format.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+  audio_format.Format.cbSize                = sizeof(audio_format);
+  audio_format.Format.wFormatTag            = WAVE_FORMAT_EXTENSIBLE;
+  audio_format.Format.wBitsPerSample        = PLATFORM_BIT_DEPTH;
+  audio_format.Format.nChannels             = STEREO;
+  audio_format.Format.nSamplesPerSec        = PLATFORM_SAMPLE_RATE;
+  audio_format.Format.nBlockAlign           = block_align;
+  audio_format.Format.nAvgBytesPerSec       = throughput;
+  audio_format.Samples.wValidBitsPerSample  = PLATFORM_BIT_DEPTH;
+  audio_format.dwChannelMask                = KSAUDIO_SPEAKER_STEREO;
+  audio_format.SubFormat                    = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+  WAVEFORMATEX* const format = &audio_format.Format;
 
-  // @rdk: I don't think IAudioClient_IsFormatSupported is needed with AUTOCONVERTPCM
-  WAVEFORMATEX* closest_match = &audio_format.Format;
-
-  REFERENCE_TIME duration;
-  hr = IAudioClient_GetDevicePeriod(shell_audio_client, &duration, NULL);
-  if (FAILED(hr)) {
-    shell_error_message("failed to get audio device period");
-    return SHELL_EXIT_FAILURE;
-  }
+  const DWORD audio_client_flags
+    = AUDCLNT_STREAMFLAGS_NOPERSIST
+    | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+    ;
 
   hr = IAudioClient_Initialize(
-      shell_audio_client, 
+      device.client, 
       AUDCLNT_SHAREMODE_SHARED,
-      AUDCLNT_STREAMFLAGS_NOPERSIST
-      | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
-      | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-      | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-      duration,                                       // buffer duration
-      0,                                              // periodicity
-      closest_match,
+      audio_client_flags,
+      duration,                   // buffer duration
+      0,                          // periodicity
+      format,
       NULL
       );
   if (FAILED(hr)) {
-    shell_error_message("failed to initialize audio client");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to initialize audio client");
+    goto cleanup;
   }
 
-  shell_event_handle = CreateEvent(NULL, FALSE, FALSE, NULL);
-  if (shell_event_handle == NULL) {
-    shell_error_message("failed to create wasapi event");
-    return SHELL_EXIT_FAILURE;
+  device.event = CreateEvent(NULL, FALSE, FALSE, NULL);
+  if (device.event == NULL) {
+    platform_log_error("failed to create wasapi event");
+    goto cleanup;
   }
 
-  hr = IAudioClient_SetEventHandle(shell_audio_client, shell_event_handle);
+  hr = IAudioClient_SetEventHandle(device.client, device.event);
   if (FAILED(hr)) {
-    shell_error_message("failed to set wasapi event handle");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to set wasapi event handle");
+    goto cleanup;
   }
 
-  hr = IAudioClient_GetService(shell_audio_client, &IID_IAudioRenderClient, &shell_render_client);
+  hr = IAudioClient_GetService(device.client, &IID_IAudioRenderClient, &device.render);
   if (FAILED(hr)) {
-    shell_error_message("failed to get wasapi render service");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to get wasapi render service");
+    goto cleanup;
   }
 
-  hr = IAudioClient_GetBufferSize(shell_audio_client, &shell_buffer_size);
+  hr = IAudioClient_GetBufferSize(device.client, &device.buffer_size);
   if (FAILED(hr)) {
-    shell_error_message("failed to get wasapi buffer size");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to get wasapi buffer size");
+    goto cleanup;
   }
 
-  hr = IAudioClient_Start(shell_audio_client);
+  hr = IAudioClient_Start(device.client);
   if (FAILED(hr)) {
-    shell_error_message("failed to start audio client");
-    return SHELL_EXIT_FAILURE;
+    platform_log_error("failed to start audio client");
+    goto cleanup;
   }
 
-  sim_init();
-  while (1)
-  {
-    F32* audio_buffer = NULL;
-    const Index frames = shell_audio_acquire_buffer(&audio_buffer);
-    if (frames < 0) { break; }
-    sim_step(audio_buffer, frames);
-    shell_audio_release_buffer(frames);
+  ProgramStatus status = PROGRAM_STATUS_LIVE;
+  while (status == PROGRAM_STATUS_LIVE) {
+
+    AudioBuffer buffer = {0};
+    const Bool failed = shell_audio_acquire_buffer(&buffer, &device);
+
+    if (failed == false) {
+      status = loop_audio(buffer.data, buffer.frames);
+      IAudioRenderClient_ReleaseBuffer(device.render, (U32) buffer.frames, 0);
+    } else {
+      status = PROGRAM_STATUS_FAILURE;
+    }
+
+    const Bool signal = atomic_load(&quit_signal);
+    if (signal) {
+      status = PROGRAM_STATUS_SUCCESS;
+    }
+
   }
 
-  return 0; // unreachable
+cleanup:
+
+  if (device.event) {
+    CloseHandle(device.event);
+  }
+  if (device.render) {
+    IAudioRenderClient_Release(device.render);
+  }
+  if (device.client) {
+    IAudioClient_Release(device.client);
+  }
+  if (device.device) {
+    IMMDevice_Release(device.device);
+  }
+  if (enumerator) {
+    IMMDeviceEnumerator_Release(enumerator);
+  }
+  return THREAD_EXIT_SUCCESS;
 
 }
 
-static Void shell_record_key(KeyCode c, KeyState s) {
-  KeyEvent* const event = &shell_input.events[shell_input_index];
-  event->code = c;
-  event->state = s;
-  shell_input_index = (shell_input_index + 1) % MAX_INPUT_EVENTS;
-}
+#endif
 
-static Void shell_record_char(Char c)
+/*******************************************************************************
+ * WINDOW MANAGEMENT
+ ******************************************************************************/
+
+V2S read_cursor()
 {
-  shell_input.chars[shell_char_index] = c;
-  shell_char_index = (shell_char_index + 1) % MAX_INPUT_EVENTS;
+  POINT mouse = {0};
+  GetCursorPos(&mouse);
+  ScreenToClient(shell_window, &mouse);
+  const V2S out = { mouse.x, mouse.y };
+  return out;
 }
 
-static LRESULT CALLBACK shell_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 
   switch (msg) {
 
     case WM_DESTROY:
-      PostQuitMessage(0);
-      break;
+      {
+        PostQuitMessage(0);
+      } break;
 
     case WM_KEYDOWN:
+      {
+        const WORD vkcode = LOWORD(wparam);
+        const KeyCode kc  = shell_key_table[vkcode];
+#if 0
+        const WORD flags  = HIWORD(lparam);
+        const Bool repeat = (flags & KF_REPEAT) == KF_REPEAT;
+#endif
+        if (kc != KEYCODE_NONE) {
+          const Event event = key_event(KEYSTATE_DOWN, kc);
+          loop_event(&event);
+        }
+      } break;
+
     case WM_KEYUP:
       {
         const WORD vkcode = LOWORD(wparam);
-        const WORD flags = HIWORD(lparam);
-        const BOOL upflag = (flags & KF_UP) == KF_UP;
-        const KeyState ks = upflag ? KEYSTATE_UP : KEYSTATE_DOWN;
-        const KeyCode kc = shell_key_table[vkcode];
+        const KeyCode kc  = shell_key_table[vkcode];
         if (kc != KEYCODE_NONE) {
-          const Bool repeat = (flags & KF_REPEAT) == KF_REPEAT;
-          if ((ks == KEYSTATE_DOWN && !repeat) || (ks == KEYSTATE_UP)) {
-            shell_record_key(kc, ks);
-          }
+          const Event event = key_event(KEYSTATE_UP, kc);
+          loop_event(&event);
         }
       } break;
 
     case WM_CHAR:
       {
-        const Char c = (Char) wparam;
-        shell_record_char(c);
+        const Event event = character_event((Char) wparam);
+        loop_event(&event);
       } break;
 
     case WM_LBUTTONDOWN:
-      shell_record_key(KEYCODE_MOUSE_LEFT, KEYSTATE_DOWN);
-      break;
+      {
+        const Event event = key_event(KEYSTATE_DOWN, KEYCODE_MOUSE_LEFT);
+        loop_event(&event);
+      } break;
+
     case WM_LBUTTONUP:
-      shell_record_key(KEYCODE_MOUSE_LEFT, KEYSTATE_UP);
-      break;
+      {
+        const Event event = key_event(KEYSTATE_UP, KEYCODE_MOUSE_LEFT);
+        loop_event(&event);
+      } break;
+
     case WM_RBUTTONDOWN:
-      shell_record_key(KEYCODE_MOUSE_RIGHT, KEYSTATE_DOWN);
-      break;
+      {
+        const Event event = key_event(KEYSTATE_DOWN, KEYCODE_MOUSE_RIGHT);
+        loop_event(&event);
+      } break;
+
     case WM_RBUTTONUP:
-      shell_record_key(KEYCODE_MOUSE_RIGHT, KEYSTATE_UP);
-      break;
+      {
+        const Event event = key_event(KEYSTATE_UP, KEYCODE_MOUSE_RIGHT);
+        loop_event(&event);
+      } break;
 
     default:
       return DefWindowProc(hwnd, msg, wparam, lparam);
@@ -353,6 +411,11 @@ static LRESULT CALLBACK shell_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
 
   return 0;
 
+}
+
+static INT shell_exit_code(ProgramStatus status)
+{
+  return status == PROGRAM_STATUS_FAILURE ? SHELL_EXIT_FAILURE : SHELL_EXIT_SUCCESS;
 }
 
 INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, INT ncmdshow)
@@ -364,67 +427,23 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
 
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
 
-  // set working directory to the parent of the executable
-  Char exe_path[MAX_PATH] = {0};
-  const U32 exe_length = GetModuleFileName(NULL, exe_path, MAX_PATH);
-  if (exe_length == 0) {
-    shell_error_message("failed to get executable filename");
-    return SHELL_EXIT_FAILURE;
+  // Without this call, windows will show an annoying momentary loading cursor
+  // when the user first mouses over the window.
+  SetCursor(NULL);
+
+  SystemInfo system;
+  system.display.x = GetSystemMetrics(SM_CXSCREEN);
+  system.display.y = GetSystemMetrics(SM_CYSCREEN);
+
+  ProgramConfig config = {0};
+  const ProgramStatus config_status = loop_config(&config, &system);
+  if (config_status != PROGRAM_STATUS_LIVE) {
+    return shell_exit_code(config_status);
   }
-  Char full_path[MAX_PATH] = {0};
-  Char* file_part = NULL;
-  const U32 path_length = GetFullPathName(exe_path, MAX_PATH, full_path, &file_part);
-  if (path_length == 0) {
-    shell_error_message("failed to get executable directory");
-    return SHELL_EXIT_FAILURE;
-  }
-  Char exe_dir[MAX_PATH] = {0};
-  strncpy(exe_dir, full_path, file_part - full_path);
-  const Bool cd_status = SetCurrentDirectory(exe_dir);
-  if (cd_status == 0) {
-    shell_error_message("failed to set working directory");
-    return SHELL_EXIT_FAILURE;
-  }
-
-  /*******************************************************************************
-   * AUDIO INITIALIZATION
-   ******************************************************************************/
-
-  DWORD audio_thread_id = 0;
-  HANDLE h = CreateThread( 
-      NULL,               // default security attributes
-      0,                  // default stack size
-      shell_audio_entry,  // entry point
-      NULL,
-      0,                  // default creation flags
-      &audio_thread_id    // receive thread identifier
-      );
-  if (h == NULL) {
-    shell_error_message("failed to start audio thread");
-    return SHELL_EXIT_FAILURE;
-  }
-  SetThreadPriority(h, THREAD_PRIORITY_HIGHEST);
-
-  /*******************************************************************************
-   * WINDOW INITIALIZATION
-   ******************************************************************************/
-
-  V2S primary_display;
-  primary_display.x = GetSystemMetrics(SM_CXSCREEN);
-  primary_display.y = GetSystemMetrics(SM_CYSCREEN);
-  ASSERT(primary_display.x != 0);
-  ASSERT(primary_display.y != 0);
-
-  V2S v_scale;
-  v_scale.x = primary_display.x / 320;
-  v_scale.y = primary_display.y / 180;
-  const S32 scale = MIN(v_scale.x, v_scale.y) - 1;
-
-  const V2S render_dims = v2s_scale(v2s(320, 180), scale);
 
   WNDCLASSEX wc = {0};
   wc.cbSize = sizeof(wc);
-  wc.lpfnWndProc = shell_wnd_proc;
+  wc.lpfnWndProc = wnd_proc;
   wc.hInstance = instance;
   wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
   wc.hCursor = LoadCursor(NULL, IDC_ARROW);
@@ -432,22 +451,22 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
 
   const ATOM class_id = RegisterClassEx(&wc);
   if (class_id == 0) {
-    shell_error_message("failed to register window class");
+    platform_log_error("failed to register window class");
     return SHELL_EXIT_FAILURE;
   }
 
   RECT client_rect = {0};
-  client_rect.left = 0;
-  client_rect.top = 0;
-  client_rect.right = render_dims.x;
-  client_rect.bottom = render_dims.y;
+  client_rect.left    = 0;
+  client_rect.top     = 0;
+  client_rect.right   = config.resolution.x;
+  client_rect.bottom  = config.resolution.y;
 
   const DWORD style = WS_OVERLAPPEDWINDOW ^ WS_THICKFRAME ^ WS_MAXIMIZEBOX;
   const DWORD exstyle = WS_EX_APPWINDOW;
 
   const BOOL adjust_result = AdjustWindowRectEx(&client_rect, style, FALSE, exstyle);
   if (adjust_result == FALSE) {
-    shell_error_message("failed to adjust window client area");
+    platform_log_error("failed to adjust window client area");
     return SHELL_EXIT_FAILURE;
   }
 
@@ -455,12 +474,9 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
   window_size.x = client_rect.right - client_rect.left;
   window_size.y = client_rect.bottom - client_rect.top;
 
-  V2S window_pos;
-  window_pos.x = (primary_display.x - window_size.x) / 2;
-  window_pos.y = (primary_display.y - window_size.y) / 2;
-
 #if 0
-  const HWND hwnd = CreateWindowEx(
+  // @rdk: add a fullscreen option
+  shell_window = CreateWindowEx(
       0,                              // optional window styles
       SHELL_CLASS_NAME,               // window class
       SHELL_TITLE,                    // window text
@@ -472,16 +488,15 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
       instance,   // instance handle
       NULL        // additional application data
       );
-#else
-  const HWND hwnd = CreateWindowEx(
+#endif
+
+  shell_window = CreateWindowEx(
       exstyle,
       SHELL_CLASS_NAME,
-      SHELL_TITLE,
+      config.title,
       style,
-      // CW_USEDEFAULT,
-      // 0,
-      window_pos.x,
-      window_pos.y,
+      CW_USEDEFAULT,
+      0,
       window_size.x,
       window_size.y,
       NULL,
@@ -489,15 +504,15 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
       instance,
       NULL
       );
-#endif
-  if (hwnd == NULL) {
-    shell_error_message("failed to create window");
+
+  if (shell_window == NULL) {
+    platform_log_error("failed to create window");
     return SHELL_EXIT_FAILURE;
   }
 
-  const HDC hdc = GetDC(hwnd);
+  const HDC hdc = GetDC(shell_window);
   if (hdc == NULL) {
-    shell_error_message("failed to get device context");
+    platform_log_error("failed to get device context");
     return SHELL_EXIT_FAILURE;
   }
 
@@ -511,41 +526,41 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
 
   const S32 format = ChoosePixelFormat(hdc, &pfd);
   if (format == 0) {
-    shell_error_message("failed to choose pixel format");
+    platform_log_error("failed to choose pixel format");
     return SHELL_EXIT_FAILURE;
   }
 
   const BOOL set_pixel_format_result = SetPixelFormat(hdc, format, &pfd);
   if (set_pixel_format_result == FALSE) {
-    shell_error_message("failed to set pixel format");
+    platform_log_error("failed to set pixel format");
     return SHELL_EXIT_FAILURE;
   }
 
   const HGLRC bootstrap = wglCreateContext(hdc);
   if (bootstrap == NULL) {
-    shell_error_message("failed to create bootstrap OpenGL context");
+    platform_log_error("failed to create bootstrap OpenGL context");
     return SHELL_EXIT_FAILURE;
   }
 
   const BOOL bootstrap_current = wglMakeCurrent(hdc, bootstrap);
   if (bootstrap_current == FALSE) {
-    shell_error_message("failed to activate bootstrap OpenGL context");
+    platform_log_error("failed to activate bootstrap OpenGL context");
     return SHELL_EXIT_FAILURE;
   }
 
   const S32 glad_wgl_version = gladLoaderLoadWGL(hdc);
   if (glad_wgl_version == 0) {
-    shell_error_message("GLAD WGL loader failed");
+    platform_log_error("GLAD WGL loader failed");
     return SHELL_EXIT_FAILURE;
   }
 
   if (GLAD_WGL_ARB_create_context == 0) {
-    shell_error_message("missing required extension: WGL_ARB_create_context");
+    platform_log_error("missing required extension: WGL_ARB_create_context");
     return SHELL_EXIT_FAILURE;
   }
 
   if (GLAD_WGL_ARB_create_context_profile == 0) {
-    shell_error_message("missing required extension: WGL_ARB_create_context_profile");
+    platform_log_error("missing required extension: WGL_ARB_create_context_profile");
     return SHELL_EXIT_FAILURE;
   }
 
@@ -562,88 +577,106 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
 
   const HGLRC glctx = wglCreateContextAttribsARB(hdc, NULL, wgl_attributes);
   if (glctx == NULL) {
-    shell_error_message("failed to create OpenGL context");
+    platform_log_error("failed to create OpenGL context");
     return SHELL_EXIT_FAILURE;
   }
 
   const BOOL clear_context = wglMakeCurrent(NULL, NULL);
   if (clear_context == FALSE) {
-    shell_error_message("failed to deactivate bootstrap OpenGL context");
+    platform_log_error("failed to deactivate bootstrap OpenGL context");
     return SHELL_EXIT_FAILURE;
   }
 
   const BOOL deleted_context = wglDeleteContext(bootstrap);
   if (deleted_context == FALSE) {
-    shell_error_message("failed to delete OpenGL context");
+    platform_log_error("failed to delete OpenGL context");
     return SHELL_EXIT_FAILURE;
   }
 
   const BOOL glctx_current = wglMakeCurrent(hdc, glctx);
   if (glctx_current == FALSE) {
-    shell_error_message("failed to activate OpenGL context");
+    platform_log_error("failed to activate OpenGL context");
     return SHELL_EXIT_FAILURE;
   }
 
   const S32 gl_version = gladLoaderLoadGL();
   if (gl_version == 0) {
-    shell_error_message("GLAD loader failed");
+    platform_log_error("GLAD loader failed");
     return SHELL_EXIT_FAILURE;
   }
 
   if (GLAD_WGL_EXT_swap_control) {
     const BOOL vsync_status = wglSwapIntervalEXT(1);
-    UNUSED_PARAMETER(vsync_status);
+    if (vsync_status == FALSE) {
+      platform_log_warn("failed to set vsync");
+    }
   }
 
-  glClearColor(0.f, 0.f, 0.f, 1.f);
-  glClear(GL_COLOR_BUFFER_BIT);
+  const ProgramStatus init_status = loop_init();
+  if (init_status != PROGRAM_STATUS_LIVE) {
+    return shell_exit_code(init_status);
+  }
+
+  // We swap buffers before showing the window in case the client rendered a
+  // frame during initialization.
   SwapBuffers(hdc);
-  ShowWindow(hwnd, SW_SHOW);
+  ShowWindow(shell_window, SW_SHOW);
 
-  LARGE_INTEGER frequency;
-  QueryPerformanceFrequency(&frequency);
-  shell_performance_frequency = frequency.QuadPart;
+#ifdef PLATFORM_AUDIO
 
-  render_init(render_dims);
+  DWORD audio_thread_id = 0;
+  const HANDLE audio_thread = CreateThread( 
+      NULL,               // default security attributes
+      0,                  // default stack size
+      shell_audio_entry,  // entry point
+      NULL,
+      0,                  // default creation flags
+      &audio_thread_id    // receive thread identifier
+      );
+  if (audio_thread == NULL) {
+    platform_log_error("failed to start audio thread");
+  } else {
+    const BOOL priority_status = SetThreadPriority(audio_thread, THREAD_PRIORITY_HIGHEST);
+    if (priority_status == FALSE) {
+      platform_log_warn("failed to set audio thread priority");
+    }
+  }
 
-  S64 now = shell_query_clock();
+#endif
 
-  Bool live = true;
-  S64 then, render = 0;
-  while (live) {
-
-    then = now;
-    now = shell_query_clock();
-
-    shell_input = (InputFrame) {0};
-    shell_input_index = 0;
-
-    POINT mouse = {0};
-    GetCursorPos(&mouse);
-    ScreenToClient(hwnd, &mouse);
-    shell_input.mouse.x = mouse.x;
-    shell_input.mouse.y = mouse.y;
+  ProgramStatus status = PROGRAM_STATUS_LIVE;
+  Bool quit = false;
+  while (quit == false && status == PROGRAM_STATUS_LIVE) {
 
     MSG msg = {0};
     while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
       if (msg.message == WM_QUIT) {
-        live = false;
+        quit = true;
       }
       TranslateMessage(&msg);
       DispatchMessage(&msg);
     }
 
-    process_input(&shell_input);
-    render_frame();
-
-    glFinish();
-    render = shell_query_clock() - now;
-
-    SwapBuffers(hdc);
-    glFinish();
+    if (quit == false) {
+      status = loop_video();
+      SwapBuffers(hdc);
+    }
 
   }
 
-  return 0;
+  loop_terminate();
+
+#ifdef PLATFORM_AUDIO
+
+  // signal the audio thread and wait
+  atomic_store(&quit_signal, true);
+  const DWORD wait_status = WaitForSingleObject(audio_thread, INFINITE);
+  if (wait_status != WAIT_OBJECT_0) {
+    platform_log_warn("unexpected wait status for audio thread");
+  }
+
+#endif
+
+  return SHELL_EXIT_SUCCESS;
 
 }

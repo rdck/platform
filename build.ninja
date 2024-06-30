@@ -1,16 +1,19 @@
 # compiler flags
 warnings = -W4 -wd5105 -wd4996 -wd4200 -wd4152
-includes = -I include -I vendor\handmade_math -I vendor\stb -I vendor\gustavsson
+includes = -I include -I vendor\handmade_math
 debug = -Oi -Od
-cflags = $warnings $includes $debug -MT -std:c17 -experimental:c11atomics
+define = -D PLATFORM_AUDIO
+cflags = $warnings $includes $define $debug -MT -std:c17 -experimental:c11atomics
+
+# @rdk: conditionally disable unneeded libraries
 win32_libs = user32.lib gdi32.lib opengl32.lib ole32.lib avrt.lib dbghelp.lib
 
 rule cc
   deps = msvc
-  command = cl -nologo $cflags -c -showIncludes $includes -Fo: $out $in
+  command = cl -Z7 -nologo $cflags -c -showIncludes $includes -Fo: $out $in
 
 rule link
-  command = cl -nologo -Fe: $out $in $win32_libs $
+  command = cl -Z7 -nologo -Fe: $out $in $win32_libs $
     -link -subsystem:WINDOWS
 
 rule xxd
@@ -20,25 +23,20 @@ build include\shader\primary.vert.h : xxd shader\primary.vert
 build include\shader\primary.frag.h : xxd shader\primary.frag
 build include\shader\post.vert.h    : xxd shader\post.vert
 build include\shader\post.frag.h    : xxd shader\post.frag
-build include\font.ttf.h            : xxd font\Hack-Regular.ttf
 
-build obj\shell.obj     : cc src\shell.c
-build obj\message.obj   : cc src\message.c
-build obj\model.obj     : cc src\model.c
-build obj\sim.obj       : cc src\sim.c
-build obj\view.obj      : cc src\view.c
-build obj\render.obj    : cc src\render.c | include\font.ttf.h
-build obj\display.obj   : cc src\display.c | $
-  include\shader\primary.vert.h   $
-  include\shader\primary.frag.h   $
-  include\shader\post.vert.h      $
-  include\shader\post.frag.h
+build obj\windows\shell.obj     : cc src\windows\shell.c
+build obj\windows\timer.obj     : cc src\windows\timer.c
+build obj\windows\guid.obj      : cc src\windows\guid.c
+build obj\windows\log.obj       : cc src\windows\log.c
+build obj\windows\memory.obj    : cc src\windows\memory.c
+build obj\display.obj           : cc src\display.c
+build obj\loop.obj              : cc example\loop.c
 
-build build\orcasynth.exe : link $
-  obj\shell.obj     $
-  obj\message.obj   $
-  obj\model.obj     $
-  obj\sim.obj       $
-  obj\view.obj      $
-  obj\render.obj    $
-  obj\display.obj
+build build\example.exe : link $
+  obj\windows\shell.obj     $
+  obj\windows\timer.obj     $
+  obj\windows\guid.obj      $
+  obj\windows\log.obj       $
+  obj\windows\memory.obj    $
+  obj\display.obj           $
+  obj\loop.obj
