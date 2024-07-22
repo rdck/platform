@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include "display.h"
 #include "log.h"
 #include "glad/gl.h"
