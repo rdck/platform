@@ -10,7 +10,7 @@
 #include "prelude.h"
 
 #define QUEUE_CAT(a, ...) QUEUE_CAT_(a, __VA_ARGS__)
-#define QUEUE_CAT_(a, ...) a ## __VA_ARGS__
+#define QUEUE_CAT_(a, ...) a##__VA_ARGS__
 #define QUEUE_TYPE(T) QUEUE_CAT(Queue, T)
 #define QUEUE_INIT(T) QUEUE_CAT(queue_init_, T)
 #define QUEUE_ENQUEUE(T) QUEUE_CAT(queue_enqueue_, T)
@@ -19,18 +19,15 @@
 
 #endif
 
-typedef struct {
+typedef struct
+{
   S32 capacity;
   S32 head;
   S32 tail;
   QUEUE_ELEMENT* data;
 } QUEUE_TYPE(QUEUE_ELEMENT);
 
-  static inline Void QUEUE_INIT(QUEUE_ELEMENT)(
-      QUEUE_TYPE(QUEUE_ELEMENT)* queue,
-      QUEUE_ELEMENT* data,
-      S32 capacity
-      )
+static inline Void QUEUE_INIT(QUEUE_ELEMENT)(QUEUE_TYPE(QUEUE_ELEMENT) * queue, QUEUE_ELEMENT* data, S32 capacity)
 {
   queue->capacity = capacity;
   queue->head = 0;
@@ -38,10 +35,7 @@ typedef struct {
   queue->data = data;
 }
 
-  static inline Void QUEUE_ENQUEUE(QUEUE_ELEMENT)(
-      QUEUE_TYPE(QUEUE_ELEMENT)* queue,
-      QUEUE_ELEMENT element
-      )
+static inline Void QUEUE_ENQUEUE(QUEUE_ELEMENT)(QUEUE_TYPE(QUEUE_ELEMENT) * queue, QUEUE_ELEMENT element)
 {
   const S32 new_head = (queue->head + 1) % queue->capacity;
   if (new_head != queue->tail) {
@@ -50,10 +44,7 @@ typedef struct {
   }
 }
 
-  static inline QUEUE_ELEMENT QUEUE_DEQUEUE(QUEUE_ELEMENT)(
-      QUEUE_TYPE(QUEUE_ELEMENT)* queue,
-      QUEUE_ELEMENT sentinel
-      )
+static inline QUEUE_ELEMENT QUEUE_DEQUEUE(QUEUE_ELEMENT)(QUEUE_TYPE(QUEUE_ELEMENT) * queue, QUEUE_ELEMENT sentinel)
 {
   if (queue->tail != queue->head) {
     const QUEUE_ELEMENT element = queue->data[queue->tail];
@@ -64,9 +55,7 @@ typedef struct {
   }
 }
 
-  static inline S32 QUEUE_LENGTH(QUEUE_ELEMENT)(
-      const QUEUE_TYPE(QUEUE_ELEMENT)* queue
-      )
+static inline S32 QUEUE_LENGTH(QUEUE_ELEMENT)(const QUEUE_TYPE(QUEUE_ELEMENT) * queue)
 {
   const S32 d = queue->head - queue->tail;
   return d >= 0 ? d : d + queue->capacity;

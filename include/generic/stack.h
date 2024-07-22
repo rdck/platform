@@ -10,7 +10,7 @@
 #include "prelude.h"
 
 #define STACK_CAT(a, ...) STACK_CAT_(a, __VA_ARGS__)
-#define STACK_CAT_(a, ...) a ## __VA_ARGS__
+#define STACK_CAT_(a, ...) a##__VA_ARGS__
 #define STACK_TYPE(T) STACK_CAT(Stack, T)
 #define STACK_INIT(T) STACK_CAT(stack_init_, T)
 #define STACK_PUSH(T) STACK_CAT(stack_push_, T)
@@ -19,27 +19,21 @@
 
 #endif
 
-typedef struct {
+typedef struct
+{
   S32 capacity;
   S32 head;
   STACK_ELEMENT* data;
 } STACK_TYPE(STACK_ELEMENT);
 
-  static inline Void STACK_INIT(STACK_ELEMENT)(
-      STACK_TYPE(STACK_ELEMENT)* stack,
-      STACK_ELEMENT* data,
-      S32 capacity
-      )
+static inline Void STACK_INIT(STACK_ELEMENT)(STACK_TYPE(STACK_ELEMENT) * stack, STACK_ELEMENT* data, S32 capacity)
 {
   stack->capacity = capacity;
   stack->head = 0;
   stack->data = data;
 }
 
-  static inline Void STACK_PUSH(STACK_ELEMENT)(
-      STACK_TYPE(STACK_ELEMENT)* stack,
-      STACK_ELEMENT element
-      )
+static inline Void STACK_PUSH(STACK_ELEMENT)(STACK_TYPE(STACK_ELEMENT) * stack, STACK_ELEMENT element)
 {
   if (stack->head < stack->capacity) {
     stack->data[stack->head] = element;
@@ -47,10 +41,7 @@ typedef struct {
   }
 }
 
-  static inline STACK_ELEMENT STACK_POP(STACK_ELEMENT)(
-      STACK_TYPE(STACK_ELEMENT)* stack,
-      STACK_ELEMENT sentinel
-      )
+static inline STACK_ELEMENT STACK_POP(STACK_ELEMENT)(STACK_TYPE(STACK_ELEMENT) * stack, STACK_ELEMENT sentinel)
 {
   if (stack->head > 0) {
     stack->head -= 1;
@@ -60,9 +51,7 @@ typedef struct {
   }
 }
 
-  static inline S32 STACK_SIZE(STACK_ELEMENT)(
-      const STACK_TYPE(STACK_ELEMENT)* stack
-      )
+static inline S32 STACK_SIZE(STACK_ELEMENT)(const STACK_TYPE(STACK_ELEMENT) * stack)
 {
   return stack->head;
 }
