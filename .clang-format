@@ -1,0 +1,9 @@
+---
+BasedOnStyle: Microsoft
+IndentWidth: 2
+---
+Language: Cpp
+PointerAlignment: Left
+BraceWrapping:
+  AfterControlStatement: Never
+  BeforeElse: False
