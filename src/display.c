@@ -2,10 +2,10 @@
 #include "display.h"
 #include "log.h"
 #include "glad/gl.h"
-#include "shader/primary.vert.h"
-#include "shader/primary.frag.h"
-#include "shader/post.vert.h"
-#include "shader/post.frag.h"
+#include "shader/sprite.vert.h"
+#include "shader/sprite.frag.h"
+#include "shader/resample.vert.h"
+#include "shader/resample.frag.h"
 
 #ifndef DISPLAY_SPRITES
 #define DISPLAY_SPRITES 0x400
@@ -34,9 +34,9 @@ typedef struct {
   GLuint render_vbo;
   GLuint render_vao;
 
-  GLuint postprocess_program;
-  GLuint postprocess_vbo;
-  GLuint postprocess_vao;
+  GLuint resample_program;
+  GLuint resample_vbo;
+  GLuint resample_vao;
 
   GLuint fbo;
   GLuint fb_color;
@@ -182,21 +182,22 @@ Void display_init(V2S window, V2S render)
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(gl_message_callback, 0);
 
-  const ShaderSource vert_primary = { (GLchar*) shader_primary_vert, shader_primary_vert_len };
-  const ShaderSource frag_primary = { (GLchar*) shader_primary_frag, shader_primary_frag_len };
-  const ShaderSource vert_post = { (GLchar*) shader_post_vert, shader_post_vert_len };
-  const ShaderSource frag_post = { (GLchar*) shader_post_frag, shader_post_frag_len };
+  const ShaderSource vert_primary = { (GLchar*) shader_sprite_vertex      , shader_sprite_vertex_len      };
+  const ShaderSource frag_primary = { (GLchar*) shader_sprite_fragment    , shader_sprite_fragment_len    };
+  const ShaderSource vert_post    = { (GLchar*) shader_resample_vertex    , shader_resample_vertex_len    };
+  const ShaderSource frag_post    = { (GLchar*) shader_resample_fragment  , shader_resample_fragment_len  };
+
   ctx.render_program = compile_program(vert_primary, frag_primary);
-  ctx.postprocess_program = compile_program(vert_post, frag_post);
+  ctx.resample_program = compile_program(vert_post, frag_post);
 
   ////////////////////////////////////////////////////////////////////////////////
 
-  glUseProgram(ctx.postprocess_program);
+  glUseProgram(ctx.resample_program);
 
-  glGenVertexArrays(1, &ctx.postprocess_vao);
-  glGenBuffers(1, &ctx.postprocess_vbo);
-  glBindVertexArray(ctx.postprocess_vao);
-  glBindBuffer(GL_ARRAY_BUFFER, ctx.postprocess_vbo);
+  glGenVertexArrays(1, &ctx.resample_vao);
+  glGenBuffers(1, &ctx.resample_vbo);
+  glBindVertexArray(ctx.resample_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, ctx.resample_vbo);
 
   {
     const GLsizei stride = DISPLAY_POSTPROCESS_STRIDE * sizeof(F32);
@@ -327,10 +328,10 @@ Void display_end_frame()
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glClear(GL_COLOR_BUFFER_BIT);
 
-  glUseProgram(ctx.postprocess_program);
+  glUseProgram(ctx.resample_program);
   glViewport(0, 0, ctx.window_resolution.x, ctx.window_resolution.y);
   glDisable(GL_BLEND);
-  glBindVertexArray(ctx.postprocess_vao);
+  glBindVertexArray(ctx.resample_vao);
   glBindTexture(GL_TEXTURE_2D, ctx.fb_color);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 }
