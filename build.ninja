@@ -1,11 +1,13 @@
+# abbreviations
+hmm = vendor\handmade_math
+shader = shader
+
 # compiler flags
 warnings = -W4 -wd5105 -wd4996 -wd4200 -wd4152
-includes = -I include -I vendor\handmade_math
+includes = -I include -I $hmm
 debug = -Oi -Od
 define = -D PLATFORM_AUDIO
 cflags = $warnings $includes $define $debug -MT -std:c17 -experimental:c11atomics
-
-# @rdk: conditionally disable unneeded libraries
 win32_libs = user32.lib gdi32.lib opengl32.lib ole32.lib avrt.lib dbghelp.lib
 
 rule cc
@@ -19,21 +21,21 @@ rule link
 rule xxd
   command = xxd -n $name -i $in $out
 
-build include\shader\sprite.vert.h    : xxd shader\sprite.vert
+build include\shader\sprite.vert.h    : xxd $shader\sprite.vert
   name = shader_sprite_vertex
-build include\shader\sprite.frag.h    : xxd shader\sprite.frag
+build include\shader\sprite.frag.h    : xxd $shader\sprite.frag
   name = shader_sprite_fragment
-build include\shader\resample.vert.h  : xxd shader\resample.vert
+build include\shader\resample.vert.h  : xxd $shader\resample.vert
   name = shader_resample_vertex
-build include\shader\resample.frag.h  : xxd shader\resample.frag
+build include\shader\resample.frag.h  : xxd $shader\resample.frag
   name = shader_resample_fragment
 
-build obj\windows\shell.obj     : cc src\windows\shell.c
-build obj\windows\timer.obj     : cc src\windows\timer.c
+build obj\display.obj           : cc src\display.c
 build obj\windows\guid.obj      : cc src\windows\guid.c
 build obj\windows\log.obj       : cc src\windows\log.c
 build obj\windows\memory.obj    : cc src\windows\memory.c
-build obj\display.obj           : cc src\display.c
+build obj\windows\shell.obj     : cc src\windows\shell.c
+build obj\windows\timer.obj     : cc src\windows\timer.c
 build obj\loop.obj              : cc example\loop.c
 
 build build\example.exe : link $
