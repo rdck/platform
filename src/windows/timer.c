@@ -2,11 +2,18 @@
 #include <windows.h>
 #include "timer.h"
 
-S64 timer_get_frequency()
+static S64 timer_frequency = 0;
+
+Void timer_init()
 {
   LARGE_INTEGER frequency;
   QueryPerformanceFrequency(&frequency);
-  return frequency.QuadPart;
+  timer_frequency = frequency.QuadPart;
+}
+
+S64 timer_get_frequency()
+{
+  return timer_frequency;
 }
 
 S64 timer_get_counter()
@@ -14,4 +21,10 @@ S64 timer_get_counter()
   LARGE_INTEGER pc;
   QueryPerformanceCounter(&pc);
   return pc.QuadPart;
+}
+
+S64 timer_get_time()
+{
+  const S64 counter = timer_get_counter();
+  return (counter * GIGA) / timer_frequency;
 }
