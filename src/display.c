@@ -346,15 +346,15 @@ U32 display_color(U8 r, U8 g, U8 b, U8 a)
 
 U32 display_color_lerp(U32 a, U32 b, F32 t)
 {
-  const U8 ar = (U8) (a <<  0);
-  const U8 ag = (U8) (a <<  8);
-  const U8 ab = (U8) (a << 16);
-  const U8 aa = (U8) (a << 24);
+  const U8 ar = (U8) (a >>  0);
+  const U8 ag = (U8) (a >>  8);
+  const U8 ab = (U8) (a >> 16);
+  const U8 aa = (U8) (a >> 24);
 
-  const U8 br = (U8) (b <<  0);
-  const U8 bg = (U8) (b <<  8);
-  const U8 bb = (U8) (b << 16);
-  const U8 ba = (U8) (b << 24);
+  const U8 br = (U8) (b >>  0);
+  const U8 bg = (U8) (b >>  8);
+  const U8 bb = (U8) (b >> 16);
+  const U8 ba = (U8) (b >> 24);
 
   const U8 or = u8_lerp(ar, br, t);
   const U8 og = u8_lerp(ag, bg, t);
