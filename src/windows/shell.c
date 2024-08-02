@@ -10,6 +10,7 @@
 #include <mmdeviceapi.h>
 #endif
 
+#include <string.h>
 #include <stdatomic.h>
 #include "loop.h"
 #include "audio_format.h"
@@ -439,6 +440,38 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmdline, IN
   const ProgramStatus config_status = loop_config(&config, &system);
   if (config_status != PROGRAM_STATUS_LIVE) {
     return shell_exit_code(config_status);
+  }
+
+  if (config.normalize_working_directory) {
+
+    // get executable file name
+    Char exe_path[MAX_PATH] = {0};
+    const U32 exe_length = GetModuleFileName(NULL, exe_path, MAX_PATH);
+    if (exe_length == 0) {
+      platform_log_error("failed to get executable filename");
+      return SHELL_EXIT_FAILURE;
+    }
+
+    // get full path
+    Char full_path[MAX_PATH] = {0};
+    Char* file_part = NULL;
+    const U32 path_length = GetFullPathName(exe_path, MAX_PATH, full_path, &file_part);
+    if (path_length == 0) {
+      platform_log_error("failed to get executable directory");
+      return SHELL_EXIT_FAILURE;
+    }
+
+    // get parent
+    Char exe_dir[MAX_PATH] = {0};
+    strncpy(exe_dir, full_path, file_part - full_path);
+
+    // set working directory
+    const Bool cd_status = SetCurrentDirectory(exe_dir);
+    if (cd_status == 0) {
+      platform_log_error("failed to set working directory");
+      return SHELL_EXIT_FAILURE;
+    }
+
   }
 
   WNDCLASSEX wc = {0};

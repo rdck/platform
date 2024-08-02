@@ -4,13 +4,18 @@
 #include "event.h"
 
 typedef struct SystemInfo {
-  V2S display; // primary display resolution
+  V2S display;      // primary display resolution
 } SystemInfo;
 
 typedef struct ProgramConfig {
+
   Char* title;      // window title
   Char* caption;    // popup caption
   V2S resolution;   // window resolution
+
+  // set working directory to the parent of the executable
+  Bool normalize_working_directory;
+
 } ProgramConfig;
 
 typedef enum ProgramStatus {
