@@ -22,9 +22,3 @@ S64 timer_get_counter()
   QueryPerformanceCounter(&pc);
   return pc.QuadPart;
 }
-
-S64 timer_get_time()
-{
-  const S64 counter = timer_get_counter();
-  return (counter * GIGA) / timer_frequency;
-}
