@@ -142,3 +142,45 @@ static inline V2F v2f_of_v2s(V2S v)
   out.y = (F32) v.y;
   return out;
 }
+
+static inline V2F v2f_lerp(V2F l, V2F r, F32 t)
+{
+  return HMM_LerpV2(l, t, r);
+}
+
+static inline V3F v3f_lerp(V3F l, V3F r, F32 t)
+{
+  return HMM_LerpV3(l, t, r);
+}
+
+static inline V4F v4f_lerp(V4F l, V4F r, F32 t)
+{
+  return HMM_LerpV4(l, t, r);
+}
+
+static inline V2F v2f_smoothstep(V2F l, V2F r, F32 t)
+{
+  V2F out;
+  out.x = f32_smoothstep(l.x, r.x, t);
+  out.y = f32_smoothstep(l.y, r.y, t);
+  return out;
+}
+
+static inline V3F v3f_smoothstep(V3F l, V3F r, F32 t)
+{
+  V3F out;
+  out.x = f32_smoothstep(l.x, r.x, t);
+  out.y = f32_smoothstep(l.y, r.y, t);
+  out.z = f32_smoothstep(l.z, r.z, t);
+  return out;
+}
+
+static inline V4F v4f_smoothstep(V4F l, V4F r, F32 t)
+{
+  V4F out;
+  out.x = f32_smoothstep(l.x, r.x, t);
+  out.y = f32_smoothstep(l.y, r.y, t);
+  out.z = f32_smoothstep(l.z, r.z, t);
+  out.w = f32_smoothstep(l.w, r.w, t);
+  return out;
+}
