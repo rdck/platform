@@ -7,3 +7,6 @@
 [submodule "vendor/gustavsson"]
 	path = vendor/gustavsson
 	url = https://github.com/rdck/gustavsson.git
+[submodule "vendor/dr_libs"]
+	path = vendor/dr_libs
+	url = git@github.com:rdck/dr_libs.git
