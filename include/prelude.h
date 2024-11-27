@@ -33,6 +33,11 @@ typedef ptrdiff_t       Index;
 
 typedef Void* VoidPointer;
 
+typedef enum {
+  STATUS_FAILURE,
+  STATUS_SUCCESS,
+} Status;
+
 /*******************************************************************************
  * COMMON MACROS
  ******************************************************************************/
