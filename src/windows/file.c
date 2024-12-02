@@ -23,6 +23,7 @@ Byte* platform_read_file(const Char* path, Index* size)
   const BOOL file_size_status = GetFileSizeEx(handle, &file_size);
   ASSERT(file_size.HighPart == 0);
   if (file_size_status == FALSE) {
+    CloseHandle(handle);
     return NULL;
   }
 
@@ -40,8 +41,13 @@ Byte* platform_read_file(const Char* path, Index* size)
       NULL);                  // overlapped
   ASSERT(bytes_read == file_size.LowPart);
   if (read_file_status == FALSE) {
+    CloseHandle(handle);
+    free(buffer);
     return NULL;
   }
+
+  // close file
+  CloseHandle(handle);
 
   // insert null terminator
   buffer[file_size.LowPart] = 0;
