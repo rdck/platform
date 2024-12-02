@@ -10,3 +10,5 @@
 
 Byte* platform_read_file(const Char* path, Index* size);
 Void platform_free_file(Byte* content);
+
+Index platform_write_file(const Char* path, const Byte* content, Index size);

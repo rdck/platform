@@ -61,3 +61,48 @@ Void platform_free_file(Byte* content)
 {
   free(content);
 }
+
+Index platform_write_file(const Char* path, const Byte* content, Index size)
+{
+  // validate parameters
+  ASSERT(size <= UINT32_MAX);
+  ASSERT(content);
+
+  // open file for writing
+  const HANDLE handle = CreateFile(
+      path,                   // file to open
+      GENERIC_WRITE,          // open for writing
+      0,                      // don't share
+      NULL,                   // default security
+      CREATE_ALWAYS,          // create file if it doesn't exist
+      FILE_ATTRIBUTE_NORMAL,  // normal file
+      NULL);                  // no attr. template
+  if (handle == INVALID_HANDLE_VALUE) {
+    return INDEX_NONE;
+  }
+
+  // write file
+  DWORD bytes_written = 0;
+  const BOOL write_file_status = WriteFile(
+      handle,                 // file handle
+      content,                // content to write
+      (DWORD) size,           // size to write
+      &bytes_written,         // size written
+      NULL                    // overlapped
+      );
+  if (write_file_status == FALSE) {
+    CloseHandle(handle);
+    return INDEX_NONE;
+  }
+
+  // truncate file
+  const Bool truncate_status = SetEndOfFile(handle);
+  if (truncate_status == FALSE) {
+    CloseHandle(handle);
+    return INDEX_NONE;
+  }
+
+  // close handle and return bytes written
+  CloseHandle(handle);
+  return (Index) bytes_written;
+}
