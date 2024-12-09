@@ -111,6 +111,7 @@ typedef enum EventTag {
   EVENT_NONE,
   EVENT_KEY,
   EVENT_CHARACTER,
+  EVENT_MOUSE,
   EVENT_CARDINAL,
 } EventTag;
 
@@ -119,6 +120,7 @@ typedef struct Event {
   union {
     KeyEvent key;
     CharacterEvent character;
+    V2S mouse;
   };
 } Event;
 
@@ -139,5 +141,13 @@ static inline Event character_event(Char c)
   Event out;
   out.tag = EVENT_CHARACTER;
   out.character.character = c;
+  return out;
+}
+
+static inline Event mouse_move_event(V2S mouse)
+{
+  Event out;
+  out.tag = EVENT_MOUSE;
+  out.mouse = mouse;
   return out;
 }

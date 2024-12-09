@@ -3,6 +3,7 @@
  ******************************************************************************/
 
 #include "windows/wrapper.h"
+#include <windowsx.h>
 
 #ifdef PLATFORM_AUDIO
 #include <audioclient.h>
@@ -402,6 +403,14 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
     case WM_RBUTTONUP:
       {
         const Event event = key_event(KEYSTATE_UP, KEYCODE_MOUSE_RIGHT);
+        loop_event(&event);
+      } break;
+
+    case WM_MOUSEMOVE:
+      {
+        const S32 x = GET_X_LPARAM(lparam);
+        const S32 y = GET_Y_LPARAM(lparam);
+        const Event event = mouse_move_event(v2s(x, y));
         loop_event(&event);
       } break;
 
